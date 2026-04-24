@@ -11,6 +11,38 @@ def _load_mykeys():
     if not os.path.exists(p): raise Exception('[ERROR] mykey.py or mykey.json not found, please create one from mykey_template.')
     with open(p, encoding='utf-8') as f: return json.load(f)
 
+def reload_mykeys():
+    """强制重新加载 mykey.py / mykey.json，刷新全局 mykeys 和 proxies 缓存。"""
+    import importlib
+    try:
+        import mykey
+        importlib.reload(mykey)
+    except ImportError:
+        pass
+    mk = _load_mykeys()
+    proxy = mk.get("proxy", 'http://127.0.0.1:2082')
+    px = {"http": proxy, "https": proxy} if proxy else None
+    globals().update(mykeys=mk, proxies=px)
+    return mk
+
+_mykey_mtime = 0
+
+def _get_mykey_mtime():
+    for name in ('mykey.py', 'mykey.json'):
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+        if os.path.exists(p):
+            return os.path.getmtime(p)
+    return 0
+
+def reload_mykeys_if_changed():
+    """仅当 mykey 文件被修改过时才重载，返回 (是否重载, mykeys)。"""
+    global _mykey_mtime
+    mtime = _get_mykey_mtime()
+    if mtime > _mykey_mtime:
+        _mykey_mtime = mtime
+        return True, reload_mykeys()
+    return False, globals().get('mykeys') or _load_mykeys()
+
 def __getattr__(name):  # once guard in PEP 562
     if name in ('mykeys', 'proxies'):  
         mk = _load_mykeys()

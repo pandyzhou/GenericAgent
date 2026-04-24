@@ -43,6 +43,14 @@ def render_sidebar():
         st.caption(f"空闲时间：{int(time.time()) - last_reply_time}秒", help="当超过30分钟未收到回复时，系统会自动任务")
     if st.button("切换备用链路"):
         agent.next_llm(); st.rerun(scope="fragment")
+    if st.button("🔄 重载 LLM 配置"):
+        try:
+            result = agent.reload_llm_configs(force=True)
+            names = ', '.join(name for _, name, _ in result)
+            st.toast(f"✅ 已重载，{len(result)} 个 LLM: {names}")
+        except Exception as e:
+            st.toast(f"❌ 重载失败: {e}")
+        st.rerun(scope="fragment")
     if st.button("强行停止任务"):
         agent.abort(); st.toast("已发送停止信号"); st.rerun()
     if st.button("重新注入工具"):
