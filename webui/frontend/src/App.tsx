@@ -789,7 +789,7 @@ export default function App() {
     setActiveRunId(null)
     setSelectedSessionIndex(null)
     setStreamStatus('idle')
-    refresh().catch(() => undefined)
+    await refresh()
   }
 
   const openSession = async (index: number) => {
@@ -802,7 +802,7 @@ export default function App() {
     setSelectedSessionIndex(index)
     setPage("session")
     setStreamStatus('idle')
-    refresh().catch(() => undefined)
+    await refresh()
   }
 
   const deleteSession = async (index: number) => {
@@ -1103,7 +1103,7 @@ export default function App() {
               <div className="conversation-history-list">
                 {sessions.map((s) => (
                   <button key={s.path} className={`conversation-history-item ${selectedSessionIndex === s.index ? "is-active" : ""}`} onClick={() => openSession(s.index)} onContextMenu={(e) => openContextMenu(e, { type: 'session', sessionIndex: s.index })}>
-                    <span className="history-preview">{s.preview || "未命名会话"}</span>
+                    <span className="history-preview">{s.preview || "未命名会话"}{s.current ? " · 当前" : ""}</span>
                     <span className="history-meta">{s.rounds} 轮 · {formatRelativeTime(s.mtime)}</span>
                   </button>
                 ))}

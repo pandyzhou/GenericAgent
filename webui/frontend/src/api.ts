@@ -13,6 +13,7 @@ export type SessionItem = {
   mtime: number
   preview: string
   rounds: number
+  current?: boolean
 }
 
 export type ChatMessage = {

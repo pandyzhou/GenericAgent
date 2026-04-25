@@ -2,11 +2,13 @@ from bottle import Bottle, request, response, static_file
 import glob, json, os, queue, re, shutil, threading, time, uuid, sys, requests as http_requests
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+FRONTENDS_DIR = os.path.join(ROOT, 'frontends')
+for path in (ROOT, FRONTENDS_DIR):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from agentmain import GeneraticAgent
-from frontends.continue_cmd import list_sessions, handle_frontend_command, reset_conversation, extract_ui_messages
+from frontends.continue_cmd import list_sessions, reset_conversation, extract_ui_messages, restore
 
 FRONTEND_DIST = os.path.join(ROOT, 'webui', 'frontend', 'dist')
 
@@ -183,23 +185,29 @@ def api_switch_llm():
     }
 
 
+def _current_session_path():
+    return os.path.join(ROOT, 'temp', 'model_responses', f'model_responses_{os.getpid()}.txt')
+
+
 @app.get('/api/sessions')
 def api_sessions():
     sessions = []
-    for idx, (path, mtime, preview, rounds) in enumerate(list_sessions(exclude_pid=os.getpid())[:20], 1):
+    current_path = os.path.abspath(_current_session_path())
+    for idx, (path, mtime, preview, rounds) in enumerate(list_sessions()[:20], 1):
         sessions.append({
             'index': idx,
             'path': path,
             'mtime': mtime,
             'preview': preview,
             'rounds': rounds,
+            'current': os.path.abspath(path) == current_path,
         })
     return {'ok': True, 'sessions': sessions}
 
 
 @app.delete('/api/sessions/<idx:int>')
 def api_delete_session(idx):
-    sessions = list_sessions(exclude_pid=os.getpid())
+    sessions = list_sessions()
     if idx <= 0 or idx > len(sessions):
         response.status = 404
         return {'ok': False, 'error': '会话不存在'}
@@ -252,11 +260,22 @@ def api_continue():
     if idx <= 0:
         response.status = 400
         return {'ok': False, 'error': 'index 必须大于 0'}
-    message = handle_frontend_command(agent, f'/continue {idx}', exclude_pid=os.getpid())
-    sessions = list_sessions(exclude_pid=os.getpid())
-    history = []
-    if message.startswith('✅') and 0 < idx <= len(sessions):
-        history = extract_ui_messages(sessions[idx - 1][0])
+
+    sessions = list_sessions()
+    if idx > len(sessions):
+        response.status = 404
+        return {'ok': False, 'error': f'索引越界（有效范围 1-{len(sessions)}）'}
+
+    target_path = sessions[idx - 1][0]
+    current_path = os.path.abspath(_current_session_path())
+
+    if os.path.abspath(target_path) == current_path:
+        history = extract_ui_messages(target_path)
+        return {'ok': True, 'message': '✅ 已打开当前会话', 'history': history}
+
+    reset_conversation(agent, message=None)
+    message, _ = restore(agent, target_path)
+    history = extract_ui_messages(target_path) if message.startswith(('✅', '⚠️')) else []
     return {'ok': True, 'message': message, 'history': history}
 
 
