@@ -6,7 +6,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 elif hasattr(sys.stderr, 'reconfigure'): sys.stderr.reconfigure(errors='replace')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from llmcore import LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession
+from llmcore import LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession, reload_mykeys, reload_mykeys_if_changed
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
 
@@ -43,7 +43,20 @@ class GeneraticAgent:
     def __init__(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
-        from llmcore import mykeys
+        self.lock = threading.Lock()
+        self.task_dir = None
+        self.history = []
+        self.task_queue = queue.Queue() 
+        self.is_running = False; self.stop_sig = False
+        self.llm_no = 0;  self.inc_out = False
+        self.handler = None; self.verbose = True
+        self._build_llm_clients()
+        self.llmclient = self.llmclients[self.llm_no]
+
+    def _build_llm_clients(self, mykeys=None):
+        """从 mykeys 字典构建 llmclients 列表。"""
+        if mykeys is None:
+            from llmcore import mykeys
         llm_sessions = []
         for k, cfg in mykeys.items():
             if not any(x in k for x in ['api', 'config', 'cookie']): continue
@@ -62,16 +75,32 @@ class GeneraticAgent:
                     else: llm_sessions[i] = ToolClient(mixin)
                 except Exception as e: print(f'[WARN] Failed to init MixinSession with cfg {s["mixin_cfg"]}: {e}')
         self.llmclients = llm_sessions
-        self.lock = threading.Lock()
-        self.task_dir = None
-        self.history = []
-        self.task_queue = queue.Queue() 
-        self.is_running = False; self.stop_sig = False
-        self.llm_no = 0;  self.inc_out = False
-        self.handler = None; self.verbose = True
+
+    def reload_llm_configs(self, force=False):
+        """热重载 mykey.py，重建所有 LLM 客户端。
+        force=False 时仅在文件修改后才重载，force=True 时强制重载。"""
+        if force:
+            mk = reload_mykeys()
+        else:
+            changed, mk = reload_mykeys_if_changed()
+            if not changed:
+                return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
+        old_history = None
+        try: old_history = self.llmclient.backend.history
+        except: pass
+        self._build_llm_clients(mk)
+        if not self.llmclients:
+            raise RuntimeError('重载后没有可用的 LLM 配置')
+        self.llm_no = min(self.llm_no, len(self.llmclients) - 1)
         self.llmclient = self.llmclients[self.llm_no]
+        if old_history:
+            try: self.llmclient.backend.history = old_history
+            except: pass
+        print(f'[HotReload] LLM configs reloaded, {len(self.llmclients)} clients available.')
+        return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
 
     def next_llm(self, n=-1):
+        self.reload_llm_configs()
         self.llm_no = ((self.llm_no + 1) if n < 0 else n) % len(self.llmclients)
         lastc = self.llmclient
         self.llmclient = self.llmclients[self.llm_no]
@@ -81,7 +110,9 @@ class GeneraticAgent:
         name = self.get_llm_name(model=True)
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
         else: load_tool_schema()
-    def list_llms(self): return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
+    def list_llms(self):
+        self.reload_llm_configs()
+        return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
     def get_llm_name(self, b=None, model=False):
         b = self.llmclient if b is None else b
         if isinstance(b, dict): return 'BADCONFIG_MIXIN'
